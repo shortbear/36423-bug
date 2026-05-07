@@ -1,16 +1,55 @@
-# React + Vite
+# Repro: facebook/react#36423
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Minimal Vite + React 19 repro for [facebook/react#36423](https://github.com/facebook/react/issues/36423) —
+`useEffect` infinite loops are silent in production because the
+`NESTED_PASSIVE_UPDATE_LIMIT` check is wrapped in `__DEV__` and never throws.
 
-Currently, two official plugins are available:
+## Setup
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+```bash
+npm install
+```
 
-## React Compiler
+## Reproduce the bug
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+**Development mode** (loop is caught):
+```bash
+npm run dev
+```
+Open http://localhost:5173 and the DevTools Console. After ~50 renders you will
+see: `Warning: Maximum update depth exceeded...`
 
-## Expanding the ESLint configuration
+**Production mode** (loop is silent):
+```bash
+npm run build && npm run preview
+```
+Open http://localhost:4173 and the DevTools Console. No error, no warning —
+the component re-renders indefinitely and pegs the CPU. Nothing is reported
+to error boundaries or error monitoring tools.
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+## The buggy component
+
+`src/App.jsx` renders `<BuggyComponent />`, which calls `setCount` inside a
+`useEffect` with no dependency array, triggering an infinite loop:
+
+```jsx
+function BuggyComponent() {
+  const [count, setCount] = React.useState(0);
+
+  React.useEffect(() => {
+    setCount(c => c + 1);
+  }); // no dependency array — fires after every render
+
+  return <div>{count}</div>;
+}
+```
+
+## Expected behavior
+
+React should throw in production, the same way it does for synchronous
+infinite loops (`NESTED_UPDATE_LIMIT`), so that error boundaries and error
+monitoring tools (Sentry, Datadog, etc.) receive a signal.
+
+## React version
+
+19.x
